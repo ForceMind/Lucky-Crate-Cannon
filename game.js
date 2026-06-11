@@ -1,5 +1,6 @@
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
+const socket = io();
 
 let currentLang = 'en';
 const i18n = {
@@ -192,13 +193,7 @@ function hitCrate(crate, bullet){
     particles.push({x:bullet.x, y:bullet.y, vx:(Math.random()-.5)*5, vy:(Math.random()-.5)*5, life:22, size:2+Math.random()*3});
   }
 
-  fetch('/api/hit', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ multi: crate.type.multi, power: bullet.power })
-  })
-  .then(res => res.json())
-  .then(data => {
+  socket.emit('hit', { multi: crate.type.multi, power: bullet.power }, (data) => {
     if(data.win){
       crate.alive = false;
       if(lockedCrate === crate) lockedCrate = null;
@@ -217,9 +212,6 @@ function hitCrate(crate, bullet){
       const missText = crate.crack > .65 ? t('almostBreak') : t('hit');
       floatTexts.push({x:bullet.x, y:bullet.y-12, txt:missText, life:28, size:15, rise:.75});
     }
-  })
-  .catch(err => {
-    console.error("Hit request failed", err);
   });
 }
 
@@ -652,10 +644,10 @@ canvas.addEventListener("mousemove", setTarget);
 
 // 使用 mousedown 和 touchstart 统一处理开火和UI点击
 canvas.addEventListener("mousedown", e=>{ 
-  setTarget(e); 
   if(isUiPoint(e.clientX, e.clientY)) {
     handleUiClick(e.clientX, e.clientY);
   } else {
+    setTarget(e); 
     firing = true;
   }
 });
@@ -663,11 +655,11 @@ window.addEventListener("mouseup", ()=> firing = false);
 
 canvas.addEventListener("touchstart", e=>{ 
   e.preventDefault(); 
-  setTarget(e); 
   const p=e.touches[0]; 
   if(isUiPoint(p.clientX, p.clientY)) {
     handleUiClick(p.clientX, p.clientY);
   } else {
+    setTarget(e); 
     firing = true;
   }
 }, {passive:false});

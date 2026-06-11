@@ -1,124 +1,157 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const http = require('http');
+const { Server } = require('socket.io');
 
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST']
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
 app.use(express.static(__dirname));
 
-// 平台概率优势百分比 (Platform Advantage Percentage)
-// 0 表示没有优势 (正常爆率)
-// 3 表示平台有 3% 的优势，玩家实际胜率 = 原胜率 * (1 - 3/100)
-// -2 表示平台让利 2%，玩家实际胜率 = 原胜率 * (1 + 2/100)
-let platformAdvantage = 0;
+// 全局默认优势
+let globalDefaultAdvantage = 0;
 
-// 数据统计 (实时在内存中累积，用于展示)
-let stats = {
+// 全局统计数据 (供后台显示)
+let globalStats = {
   totalShots: 0,
   totalWins: 0,
   totalCoinsSpent: 0,
   totalCoinsRewarded: 0
 };
 
-// 周期统计 (用于动态调整爆率，每30秒重置)
-let periodStats = {
-  spent: 0,
-  rewarded: 0
-};
+// 在线玩家状态
+const players = new Map();
 
-// 每30秒执行一次检查与重置
-setInterval(() => {
-  if (periodStats.spent > 0) {
-    let rtp = periodStats.rewarded / periodStats.spent;
-    // 如果 RTP 低于 80%，平台优势改为 -15
-    if (rtp < 0.80) {
-      platformAdvantage = -15;
+io.on('connection', (socket) => {
+  // 初始化玩家状态
+  const player = {
+    id: socket.id,
+    stats: { shots: 0, wins: 0, spent: 0, rewarded: 0 },
+    periodStats: { spent: 0, rewarded: 0 },
+    activeAdvantage: null // null 表示继承 globalDefaultAdvantage
+  };
+  
+  players.set(socket.id, player);
+
+  // 每30秒检查并重置当前玩家的 periodStats
+  player.timer = setInterval(() => {
+    if (player.periodStats.spent > 0) {
+      let rtp = player.periodStats.rewarded / player.periodStats.spent;
+      if (rtp < 0.80) {
+        player.activeAdvantage = -15; // 放水
+      } else {
+        player.activeAdvantage = null; // 恢复默认
+      }
     }
-  }
-  // 重置统计
-  periodStats.spent = 0;
-  periodStats.rewarded = 0;
-}, 30000);
+    player.periodStats.spent = 0;
+    player.periodStats.rewarded = 0;
+  }, 30000);
 
-// 提供主游戏页面
+  // 处理命中逻辑
+  socket.on('hit', (data, callback) => {
+    const { multi, power } = data;
+    if (!multi || !power) {
+      if (callback) callback({ error: 'Missing multi or power' });
+      return;
+    }
+
+    let baseProbability = 1 / multi;
+    
+    // 确定当前使用的平台优势
+    let currentAdvantage = player.activeAdvantage !== null ? player.activeAdvantage : globalDefaultAdvantage;
+    
+    let finalProbability = baseProbability * (1 - currentAdvantage / 100);
+    const win = Math.random() < finalProbability;
+    
+    // 记录全局和个人数据
+    globalStats.totalShots++;
+    globalStats.totalCoinsSpent += power;
+    player.stats.shots++;
+    player.stats.spent += power;
+    player.periodStats.spent += power;
+
+    if (win) {
+      let reward = power * multi;
+      globalStats.totalWins++;
+      globalStats.totalCoinsRewarded += reward;
+      player.stats.wins++;
+      player.stats.rewarded += reward;
+      player.periodStats.rewarded += reward;
+    }
+
+    // 防大出血：如果当前周期 RTP > 120%，立刻定向打压该玩家
+    if (player.periodStats.spent > 0) {
+      let currentRtp = player.periodStats.rewarded / player.periodStats.spent;
+      if (currentRtp > 1.20) {
+        player.activeAdvantage = 20;
+      }
+    }
+
+    if (callback) callback({ win: win });
+  });
+
+  socket.on('disconnect', () => {
+    clearInterval(player.timer);
+    players.delete(socket.id);
+  });
+});
+
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// 提供后台管理页面
 app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'admin.html'));
 });
 
-// 游戏逻辑：判断是否击破
-app.post('/api/hit', (req, res) => {
-  const { multi, power } = req.body;
-  
-  if (!multi || !power) {
-    return res.status(400).json({ error: 'Missing multi or power' });
-  }
-
-  // 基础获胜概率
-  let baseProbability = 1 / multi;
-  
-  // 结合平台优势的最终概率
-  let finalProbability = baseProbability * (1 - platformAdvantage / 100);
-
-  // 生成随机数判断是否获胜
-  const win = Math.random() < finalProbability;
-  
-  // 统计数据
-  stats.totalShots++;
-  stats.totalCoinsSpent += power;
-  periodStats.spent += power;
-  
-  if (win) {
-    let reward = power * multi;
-    stats.totalWins++;
-    stats.totalCoinsRewarded += reward;
-    periodStats.rewarded += reward;
-  }
-
-  // 无论什么时候如果用户 RTP 当下高于 120%，则平台优势改为 20
-  if (periodStats.spent > 0) {
-    let currentRtp = periodStats.rewarded / periodStats.spent;
-    if (currentRtp > 1.20) {
-      platformAdvantage = 20;
-    }
-  }
-
-  res.json({
-    win: win,
-    // 实际生产环境中不要把概率传回前端，这里为了调试和演示可以传回
-    _debug_prob: finalProbability 
-  });
-});
-
-// 后台 API：获取当前平台优势
 app.get('/api/admin/advantage', (req, res) => {
-  res.json({ advantage: platformAdvantage });
+  res.json({ advantage: globalDefaultAdvantage });
 });
 
-// 后台 API：设置平台优势
 app.post('/api/admin/advantage', (req, res) => {
   const { advantage } = req.body;
   if (typeof advantage === 'number') {
-    platformAdvantage = advantage;
-    res.json({ success: true, advantage: platformAdvantage });
+    globalDefaultAdvantage = advantage;
+    res.json({ success: true, advantage: globalDefaultAdvantage });
   } else {
-    res.status(400).json({ success: false, error: 'Invalid advantage value' });
+    res.status(400).json({ success: false, error: 'Invalid advantage' });
   }
 });
 
-// 后台 API：获取实时数据统计
 app.get('/api/admin/stats', (req, res) => {
-  res.json(stats);
+  // 组装所有在线玩家的状态
+  const onlinePlayers = [];
+  for (const [id, player] of players.entries()) {
+    let rtp = player.stats.spent > 0 ? (player.stats.rewarded / player.stats.spent * 100).toFixed(1) : 0;
+    onlinePlayers.push({
+      id: id,
+      shots: player.stats.shots,
+      spent: player.stats.spent,
+      rewarded: player.stats.rewarded,
+      rtp: rtp,
+      currentAdvantage: player.activeAdvantage !== null ? player.activeAdvantage : globalDefaultAdvantage
+    });
+  }
+
+  res.json({
+    globalStats,
+    globalDefaultAdvantage,
+    onlinePlayers
+  });
 });
 
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
   console.log(`Admin panel on http://localhost:${PORT}/admin`);
 });
