@@ -110,6 +110,7 @@ let cannonLevel = 1;
 const levels = [1,2,5,10];
 let bullets = [], crates = [], particles = [], floatTexts = [], coinsFly = [];
 let peerBullets = [];
+let myBulletCounter = 0;
 let target = {x: W/2, y: H/2};
 let firing = false;
 let autoFire = false;
@@ -124,13 +125,20 @@ let totalShots = 0, totalWins = 0;
 
 let peerAngle = Math.PI/2;
 let peerLevel = 1;
+let hasPeer = false;
 
 socket.on('room_joined', data => {
   roomId = data.roomId;
   myRole = data.role;
   roomAdvantage = data.roomAdvantage;
   crates = data.crates; 
+  hasPeer = data.peerCount > 0;
+  bullets = [];
+  peerBullets = [];
 });
+
+socket.on('peer_joined', () => { hasPeer = true; });
+socket.on('peer_left', () => { hasPeer = false; });
 
 socket.on('spawn_crates', data => {
   for (const c of data.crates) {
@@ -215,12 +223,14 @@ function fire(){
   const lTarget = toLogical(aimX, aimY);
   let ldx = lTarget.x - lOrigin.x;
   let ldy = lTarget.y - lOrigin.y;
-  let lAngle = Math.atan2(ldy, ldx);
+  const lAngle = Math.atan2(ldy, ldx);
 
-  socket.emit('fire', { angle: lAngle, power: cannonLevel });
+  const bId = ++myBulletCounter;
+  socket.emit('fire', { angle: lAngle, power: cannonLevel, bulletId: bId });
   
   const speed = getBulletSpeed(cannonLevel) * (LOGICAL_W / 500);
   bullets.push({
+    id: bId,
     lx: lOrigin.x + Math.cos(lAngle)*30, ly: lOrigin.y + Math.sin(lAngle)*30,
     lvx: Math.cos(lAngle) * speed, lvy: Math.sin(lAngle) * speed,
     r: 4 + Math.log2(cannonLevel+1)*1.5,
@@ -301,7 +311,7 @@ function update(){
         c.hitFlash = 10;
         const {x:sx, y:sy} = toScreen(b.lx, b.ly);
         for(let i=0;i<6;i++) particles.push({x:sx, y:sy, vx:(Math.random()-.5)*5, vy:(Math.random()-.5)*5, life:22, size:2+Math.random()*3});
-        socket.emit('hit', { crateId: c.id, power: b.power, multi: c.multi, ts: Date.now() });
+        socket.emit('hit', { crateId: c.id, bulletId: b.id, multi: c.multi, ts: Date.now() });
         break;
       }
     }
@@ -458,6 +468,7 @@ function drawCannon(){
 }
 
 function drawOpponentCannon(){
+  if (!hasPeer) return;
   const cx = W/2, cy = 62;
   let sAngle = peerAngle;
   if (myRole === 'bottom') sAngle = peerAngle + Math.PI;
@@ -702,10 +713,7 @@ function handleUiClick(x, y) {
   
   if (Math.hypot(x - (W - 85), y - 30) <= 18) {
     socket.emit('switch_room', {}, (res) => {
-      roomId = res.roomId;
-      myRole = res.role;
-      crates = [];
-      peerBullets = [];
+      // room_joined handles state clearing
     });
     return true;
   }

@@ -48,6 +48,7 @@ class Player {
     this.stats = { shots: 0, wins: 0, spent: 0, rewarded: 0 };
     this.periodStats = { spent: 0, rewarded: 0 };
     this.activeAdvantage = null; 
+    this.activeBullets = new Map();
   }
 }
 
@@ -104,6 +105,8 @@ class Room {
         id: ++this.crateIdCounter,
         typeIdx: t.typeIdx,
         multi: t.multi,
+        w: t.w,
+        h: t.h,
         x, y,
         vx: dir * t.speed * groupSpeedScale,
         bobOffset: Math.random()*Math.PI*2,
@@ -198,11 +201,13 @@ function assignRoom(player) {
 function joinNewRoom(player, socket) {
   const newRoom = assignRoom(player);
   const cratesArr = Array.from(newRoom.crates.values());
+  const peerCount = newRoom.players.length - 1;
   socket.emit('room_joined', {
     roomId: newRoom.id,
     role: player.role,
     roomAdvantage: newRoom.roomAdvantage,
-    crates: cratesArr
+    crates: cratesArr,
+    peerCount: peerCount
   });
   newRoom.broadcast('peer_joined', { playerId: player.id }, player.id);
 }
@@ -229,6 +234,14 @@ io.on('connection', (socket) => {
   });
 
   socket.on('fire', (data) => {
+    player.activeBullets.set(data.bulletId, { power: data.power, ts: Date.now() });
+
+    // 定期清理过期子弹记录
+    const now = Date.now();
+    for (const [bId, bInfo] of player.activeBullets.entries()) {
+      if (now - bInfo.ts > 10000) player.activeBullets.delete(bId);
+    }
+
     const room = rooms.get(player.roomId);
     if (room) {
       room.broadcast('peer_fire', {
@@ -245,10 +258,16 @@ io.on('connection', (socket) => {
   });
 
   socket.on('hit', (data, callback) => {
-    const { crateId, power, multi, ts } = data;
+    const { crateId, bulletId, multi, ts } = data;
     const room = rooms.get(player.roomId);
     if (!room) return callback && callback({ success: false });
     
+    const bullet = player.activeBullets.get(bulletId);
+    if (!bullet) return callback && callback({ success: false, win: false, alive: false, error: 'Invalid bullet' });
+    
+    player.activeBullets.delete(bulletId);
+    const power = bullet.power;
+
     const crate = room.crates.get(crateId);
     if (!crate) return callback && callback({ success: false, win: false, alive: false });
 
