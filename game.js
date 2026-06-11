@@ -2,6 +2,9 @@ const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 const socket = io();
 
+const LOGICAL_W = 1000;
+const LOGICAL_H = 1000;
+
 let currentLang = 'en';
 const i18n = {
   en: {
@@ -20,8 +23,10 @@ const i18n = {
     almostBreak: "Crack",
     hit: "Hit",
     paused: "PAUSED",
+    switchRoom: "Switch",
+    room: "Room ",
     hint: "Auto/Lock/Freeze · - / + to adjust cannon",
-    langToggle: "中" // 显示能切换到的语言
+    langToggle: "中" 
   },
   zh: {
     boxes: ["木箱", "绿箱", "蓝箱", "紫箱", "红箱", "银箱", "金箱", "宝石箱", "王冠箱", "传奇箱"],
@@ -39,6 +44,8 @@ const i18n = {
     almostBreak: "快碎了",
     hit: "命中",
     paused: "暂停",
+    switchRoom: "换房",
+    room: "房间 ",
     hint: "自动开火/锁定/冷冻技能 · 炮台旁 - / + 调整炮倍",
     langToggle: "EN"
   }
@@ -62,11 +69,32 @@ function resize(){
 window.addEventListener("resize", resize);
 resize();
 
+let myRole = 'bottom';
+let roomId = null;
+let roomAdvantage = null;
+
+function toScreen(lx, ly) {
+  if (myRole === 'top') {
+    lx = LOGICAL_W - lx;
+    ly = LOGICAL_H - ly;
+  }
+  return { x: lx * (W / LOGICAL_W), y: ly * (H / LOGICAL_H) };
+}
+
+function toLogical(sx, sy) {
+  let lx = sx * (LOGICAL_W / W);
+  let ly = sy * (LOGICAL_H / H);
+  if (myRole === 'top') {
+    lx = LOGICAL_W - lx;
+    ly = LOGICAL_H - ly;
+  }
+  return { x: lx, y: ly };
+}
+
 function getUiLayout() {
   const isMobile = W < 600;
   const radius = isMobile ? 22 : 30;
   const spacing = isMobile ? 52 : 75;
-  // 移动端排在左下角，避开中间的炮台；PC端排在右下角
   const startX = isMobile ? 10 + radius : W - spacing * 3 + 10;
   const skillY = H - (isMobile ? 35 : 45);
   const cannonBtnW = isMobile ? 34 : 42;
@@ -74,29 +102,14 @@ function getUiLayout() {
   const cannonBtnOffset = isMobile ? 55 : 71;
   const cx = W/2, cy = H - 62;
   
-  return { 
-    isMobile, radius, spacing, startX, skillY, 
-    cannonBtnW, cannonBtnH, cannonBtnOffset, cx, cy 
-  };
+  return { isMobile, radius, spacing, startX, skillY, cannonBtnW, cannonBtnH, cannonBtnOffset, cx, cy };
 }
-
-const boxTypes = [
-  {nameIdx:0, color:"#B97843", edge:"#7b4a25", multi:2,   chance:.5, w:62, h:48, speed:.85, weight:26},
-  {nameIdx:1, color:"#3CC47C", edge:"#197646", multi:3,   chance:.333333, w:64, h:50, speed:.78, weight:20},
-  {nameIdx:2, color:"#3E8BFF", edge:"#1f4f9e", multi:5,   chance:.2, w:66, h:52, speed:.70, weight:16},
-  {nameIdx:3, color:"#9B5CFF", edge:"#5c2bb2", multi:8,   chance:.125,w:70, h:54, speed:.62, weight:11},
-  {nameIdx:4, color:"#FF5656", edge:"#a92222", multi:12,  chance:.083333,w:72, h:56, speed:.56, weight:8},
-  {nameIdx:5, color:"#C9D2DE", edge:"#6d7a8a", multi:20,  chance:.05,w:76, h:58, speed:.50, weight:6},
-  {nameIdx:6, color:"#FFC83D", edge:"#b57b00", multi:30,  chance:.033333,w:80, h:60, speed:.43, weight:5},
-  {nameIdx:7, color:"#35E9E1", edge:"#008d8a", multi:50,chance:.02,w:84, h:62, speed:.36, weight:3},
-  {nameIdx:8, color:"#FF9D26", edge:"#b04d00", multi:100,chance:.01,w:92, h:66, speed:.30, weight:2},
-  {nameIdx:9, color:"#F567FF", edge:"#8120a0", multi:300,chance:.003333,w:102,h:72, speed:.24, weight:1}
-];
 
 let coins = 1000;
 let cannonLevel = 1;
 const levels = [1,2,5,10];
 let bullets = [], crates = [], particles = [], floatTexts = [], coinsFly = [];
+let peerBullets = [];
 let target = {x: W/2, y: H/2};
 let firing = false;
 let autoFire = false;
@@ -105,48 +118,83 @@ let lockedCrate = null;
 let freezeCd = 0;
 let freezeTimer = 0;
 let fireCd = 0;
-let spawnCd = 0;
 let paused = false;
 let shake = 0;
 let totalShots = 0, totalWins = 0;
 
-function weightedType(){
-  const total = boxTypes.reduce((s,b)=>s+b.weight,0);
-  let r = Math.random()*total;
-  for(const b of boxTypes){ r -= b.weight; if(r <= 0) return b; }
-  return boxTypes[0];
-}
+let peerAngle = Math.PI/2;
+let peerLevel = 1;
 
-function spawnGroup(){
-  const count = Math.floor(3 + Math.random()*6);
-  const twoRows = Math.random() < .45;
-  const dir = Math.random() < .5 ? 1 : -1;
-  const startX = dir > 0 ? -130 : W + 130;
-  const baseY = H * (0.30 + Math.random()*0.20);
-  const gap = 82;
-  const groupSpeedScale = .55 + Math.random()*.35;
-  for(let i=0;i<count;i++){
-    const t = weightedType();
-    const row = twoRows ? (i % 2) : 0;
-    const y = baseY + row * gap + Math.sin(i*.7)*10;
-    const x = startX - dir * i * (t.w + 18);
-    crates.push({
-      type:t, x, y, w:t.w, h:t.h,
-      vx: dir * t.speed * groupSpeedScale,
-      bob: Math.random()*Math.PI*2,
-      hitFlash:0,
-      crack:0,
-      slow:0,
-      alive:true,
-      labelLife: 90,
-      expectedHits: t.multi,
-      progressHits: 0
-    });
+socket.on('room_joined', data => {
+  roomId = data.roomId;
+  myRole = data.role;
+  roomAdvantage = data.roomAdvantage;
+  crates = data.crates; 
+});
+
+socket.on('spawn_crates', data => {
+  for (const c of data.crates) {
+    crates.push(c);
   }
-}
+});
+
+socket.on('peer_fire', data => {
+  peerAngle = data.angle;
+  peerLevel = data.power;
+  const sX = 500;
+  const sY = myRole === 'bottom' ? 0 : 1000; 
+  const speed = getBulletSpeed(data.power) * (LOGICAL_W / 500); 
+  
+  peerBullets.push({
+    lx: sX, ly: sY,
+    lvx: Math.cos(data.angle) * speed,
+    lvy: Math.sin(data.angle) * speed,
+    power: data.power,
+    life: 1
+  });
+});
+
+socket.on('peer_skill', data => {
+  if (data.type === 'freeze') {
+    freezeTimer = 300;
+  }
+});
+
+socket.on('hit_result', data => {
+  const { crateId, playerId, win, power, multi, progressHits } = data;
+  const c = crates.find(cr => cr.id === crateId);
+  if (!c) return;
+
+  if (win) {
+    c.alive = false;
+    if (lockedCrate === c) lockedCrate = null;
+    const {x:sx, y:sy} = toScreen(c.x, c.y);
+    
+    if (playerId === socket.id) {
+      const reward = power * multi;
+      coins += reward;
+      totalWins++;
+      floatTexts.push({x:sx, y:sy-35, txt:"+"+reward, life:70, size:24, rise:1.1});
+      shake = 8;
+      for(let i=0;i<8;i++){
+        coinsFly.push({x:sx+(Math.random()-.5)*40, y:sy+(Math.random()-.5)*30, tx:78, ty:32, life:45+i*2});
+      }
+    } else {
+      floatTexts.push({x:sx, y:sy-35, txt:"队友击杀", life:40, size:18, rise:1});
+    }
+
+    for(let i=0;i<18;i++){
+      particles.push({x:sx, y:sy, vx:(Math.random()-.5)*9, vy:(Math.random()-.5)*9, life:35, size:3+Math.random()*5});
+    }
+  } else {
+    c.progressHits = progressHits;
+    c.hitFlash = 10;
+    c.slow = 28;
+    c.crack = Math.min(1, c.progressHits / c.expectedHits);
+  }
+});
 
 function getBulletSpeed(level) {
-  // 子弹速度跟随倍率增加
   return 10 + Math.log2(level) * 4; 
 }
 
@@ -154,78 +202,48 @@ function fire(){
   if(coins < cannonLevel) return;
   coins -= cannonLevel;
   totalShots++;
+  
   const { cx, cy } = getUiLayout();
   let aimX = target.x, aimY = target.y;
   if(lockMode && lockedCrate && lockedCrate.alive){
-    aimX = lockedCrate.x;
-    aimY = lockedCrate.y;
+    const sCrate = toScreen(lockedCrate.x, lockedCrate.y);
+    aimX = sCrate.x;
+    aimY = sCrate.y;
   }
-  let dx = aimX - cx, dy = aimY - cy;
-  const len = Math.max(1, Math.hypot(dx,dy));
-  dx /= len; dy /= len;
   
-  const speed = getBulletSpeed(cannonLevel);
+  const lOrigin = toLogical(cx, cy);
+  const lTarget = toLogical(aimX, aimY);
+  let ldx = lTarget.x - lOrigin.x;
+  let ldy = lTarget.y - lOrigin.y;
+  let lAngle = Math.atan2(ldy, ldx);
+
+  socket.emit('fire', { angle: lAngle, power: cannonLevel });
   
+  const speed = getBulletSpeed(cannonLevel) * (LOGICAL_W / 500);
   bullets.push({
-    x: cx + dx*38, y: cy + dy*38,
-    vx: dx * speed, vy: dy * speed,
+    lx: lOrigin.x + Math.cos(lAngle)*30, ly: lOrigin.y + Math.sin(lAngle)*30,
+    lvx: Math.cos(lAngle) * speed, lvy: Math.sin(lAngle) * speed,
     r: 4 + Math.log2(cannonLevel+1)*1.5,
     power: cannonLevel,
     life: 1,
     lockedTarget: (lockMode && lockedCrate && lockedCrate.alive) ? lockedCrate : null
   });
+  
   fireCd = Math.max(4, 12 - cannonLevel * .45);
 }
 
 function crateAt(x,y){
+  const lPt = toLogical(x, y);
   for(let i=crates.length-1;i>=0;i--){
     const c = crates[i];
-    if(c.alive && x > c.x-c.w/2 && x < c.x+c.w/2 && y > c.y-c.h/2 && y < c.y+c.h/2) return c;
+    if(c.alive && lPt.x > c.x-c.w/2 && lPt.x < c.x+c.w/2 && lPt.y > c.y-c.h/2 && lPt.y < c.y+c.h/2) return c;
   }
   return null;
-}
-
-function hitCrate(crate, bullet){
-  crate.hitFlash = 10;
-  crate.slow = 28;
-  crate.progressHits += 1;
-  crate.crack = Math.min(1, crate.progressHits / crate.expectedHits);
-
-  for(let i=0;i<6;i++){
-    particles.push({x:bullet.x, y:bullet.y, vx:(Math.random()-.5)*5, vy:(Math.random()-.5)*5, life:22, size:2+Math.random()*3});
-  }
-
-  socket.emit('hit', { multi: crate.type.multi, power: bullet.power }, (data) => {
-    if(data.win){
-      crate.alive = false;
-      if(lockedCrate === crate) lockedCrate = null;
-      const reward = bullet.power * crate.type.multi;
-      coins += reward;
-      totalWins++;
-      floatTexts.push({x:crate.x, y:crate.y-35, txt:"+"+reward, life:70, size:24, rise:1.1});
-      for(let i=0;i<18;i++){
-        particles.push({x:crate.x, y:crate.y, vx:(Math.random()-.5)*9, vy:(Math.random()-.5)*9, life:35, size:3+Math.random()*5});
-      }
-      for(let i=0;i<8;i++){
-        coinsFly.push({x:crate.x+(Math.random()-.5)*40, y:crate.y+(Math.random()-.5)*30, tx:78, ty:32, life:45+i*2});
-      }
-      shake = 8;
-    } else {
-      const missText = crate.crack > .65 ? t('almostBreak') : t('hit');
-      floatTexts.push({x:bullet.x, y:bullet.y-12, txt:missText, life:28, size:15, rise:.75});
-    }
-  });
 }
 
 function update(){
   if(paused) return;
   if(shake > 0) shake *= .82;
-
-  spawnCd--;
-  if(spawnCd <= 0){
-    spawnGroup();
-    spawnCd = 95 + Math.random()*70;
-  }
 
   if(firing || autoFire){
     if(fireCd <= 0) fire();
@@ -237,12 +255,12 @@ function update(){
   for(const c of crates){
     const slowMul = freezeTimer > 0 ? 0 : (c.slow > 0 ? .28 : 1);
     c.x += c.vx * slowMul;
-    c.bob += freezeTimer > 0 ? 0 : .035;
+    c.bobOffset += freezeTimer > 0 ? 0 : .035;
     if(c.hitFlash > 0) c.hitFlash--;
     if(c.slow > 0) c.slow--;
-    if(c.labelLife > 0) c.labelLife--;
   }
-  crates = crates.filter(c => c.alive && c.x > -180 && c.x < W+180);
+  crates = crates.filter(c => c.alive !== false && c.x > -400 && c.x < 1400);
+  
   if(lockedCrate && (!lockedCrate.alive || !crates.includes(lockedCrate))) {
     lockedCrate = null;
   }
@@ -251,44 +269,59 @@ function update(){
     let highestMulti = 0;
     let bestCrate = null;
     for (const c of crates) {
-      if (c.type.multi > highestMulti) {
-        highestMulti = c.type.multi;
+      if (c.multi > highestMulti) {
+        highestMulti = c.multi;
         bestCrate = c;
       }
     }
     lockedCrate = bestCrate;
   }
 
+  // Update my bullets
   for(const b of bullets){
     if(b.lockedTarget && b.lockedTarget.alive){
       const c = b.lockedTarget;
-      const dx = c.x - b.x, dy = c.y - b.y;
+      const dx = c.x - b.lx, dy = c.y - b.ly;
       const d = Math.max(1, Math.hypot(dx,dy));
-      const speed = getBulletSpeed(b.power);
-      b.vx = dx / d * speed;
-      b.vy = dy / d * speed;
-      b.x += b.vx; b.y += b.vy;
-      if(b.x > c.x-c.w/2 && b.x < c.x+c.w/2 && b.y > c.y-c.h/2 && b.y < c.y+c.h/2){
+      const speed = getBulletSpeed(b.power) * (LOGICAL_W/500);
+      b.lvx = dx / d * speed;
+      b.lvy = dy / d * speed;
+    }
+    b.lx += b.lvx; b.ly += b.lvy;
+    
+    if(b.lx < 0){ b.lx = 0; b.lvx *= -1; }
+    if(b.lx > LOGICAL_W){ b.lx = LOGICAL_W; b.lvx *= -1; }
+    if(b.ly < 0){ b.ly = 0; b.lvy *= -1; }
+    if(b.ly > LOGICAL_H){ b.ly = LOGICAL_H; b.lvy *= -1; }
+    
+    for(const c of crates){
+      if(c.alive === false) continue;
+      if(b.lx > c.x-c.w/2 && b.lx < c.x+c.w/2 && b.ly > c.y-c.h/2 && b.ly < c.y+c.h/2){
         b.life = 0;
-        hitCrate(c,b);
-      }
-    } else {
-      b.x += b.vx; b.y += b.vy;
-      if(b.x < b.r){ b.x = b.r; b.vx *= -1; }
-      if(b.x > W - b.r){ b.x = W - b.r; b.vx *= -1; }
-      if(b.y < b.r){ b.y = b.r; b.vy *= -1; }
-      if(b.y > H - b.r){ b.y = H - b.r; b.vy *= -1; }
-      for(const c of crates){
-        if(!c.alive) continue;
-        if(b.x > c.x-c.w/2 && b.x < c.x+c.w/2 && b.y > c.y-c.h/2 && b.y < c.y+c.h/2){
-          b.life = 0;
-          hitCrate(c,b);
-          break;
-        }
+        c.hitFlash = 10;
+        const {x:sx, y:sy} = toScreen(b.lx, b.ly);
+        for(let i=0;i<6;i++) particles.push({x:sx, y:sy, vx:(Math.random()-.5)*5, vy:(Math.random()-.5)*5, life:22, size:2+Math.random()*3});
+        socket.emit('hit', { crateId: c.id, power: b.power, multi: c.multi, ts: Date.now() });
+        break;
       }
     }
   }
   bullets = bullets.filter(b => b.life > 0);
+
+  // Update peer bullets
+  for(const b of peerBullets){
+    b.lx += b.lvx; b.ly += b.lvy;
+    for(const c of crates){
+      if(c.alive === false) continue;
+      if(b.lx > c.x-c.w/2 && b.lx < c.x+c.w/2 && b.ly > c.y-c.h/2 && b.ly < c.y+c.h/2){
+        b.life = 0;
+        const {x:sx, y:sy} = toScreen(b.lx, b.ly);
+        for(let i=0;i<6;i++) particles.push({x:sx, y:sy, vx:(Math.random()-.5)*5, vy:(Math.random()-.5)*5, life:22, size:2+Math.random()*3});
+        break;
+      }
+    }
+  }
+  peerBullets = peerBullets.filter(b => b.life > 0 && b.lx>0 && b.lx<LOGICAL_W && b.ly>0 && b.ly<LOGICAL_H);
 
   for(const p of particles){ p.x += p.vx; p.y += p.vy; p.vy += .08; p.life--; }
   particles = particles.filter(p=>p.life>0);
@@ -315,66 +348,75 @@ function roundRect(x,y,w,h,r){
   ctx.closePath();
 }
 
+const colors = ["#B97843", "#3CC47C", "#3E8BFF", "#9B5CFF", "#FF5656", "#C9D2DE", "#FFC83D", "#35E9E1", "#FF9D26", "#F567FF"];
+const edges = ["#7b4a25", "#197646", "#1f4f9e", "#5c2bb2", "#a92222", "#6d7a8a", "#b57b00", "#008d8a", "#b04d00", "#8120a0"];
+
 function drawCrate(c){
-  const tInfo = c.type;
-  const y = c.y + Math.sin(c.bob)*5;
+  const {x: sx, y: sy} = toScreen(c.x, c.y);
+  const sw = c.w * (W / LOGICAL_W);
+  const sh = c.h * (H / LOGICAL_H);
+  
+  const yOffset = Math.sin(c.bobOffset)*5;
   ctx.save();
-  ctx.translate(c.x, y);
+  ctx.translate(sx, sy + yOffset);
   if(c.hitFlash>0) ctx.scale(1.06,1.06);
 
   ctx.shadowColor = "rgba(0,0,0,.35)";
   ctx.shadowBlur = 12;
   ctx.shadowOffsetY = 5;
-  roundRect(-c.w/2,-c.h/2,c.w,c.h,10);
-  ctx.fillStyle = c.hitFlash>0 ? "#fff4bf" : tInfo.color;
+  roundRect(-sw/2,-sh/2,sw,sh,10);
+  ctx.fillStyle = c.hitFlash>0 ? "#fff4bf" : colors[c.typeIdx];
   ctx.fill();
   ctx.lineWidth = 4;
-  ctx.strokeStyle = tInfo.edge;
+  ctx.strokeStyle = edges[c.typeIdx];
   ctx.stroke();
 
   ctx.shadowBlur = 0;
   ctx.globalAlpha = .78;
-  ctx.fillStyle = tInfo.edge;
-  ctx.fillRect(-c.w/2+8, -5, c.w-16, 10);
-  ctx.fillRect(-6, -c.h/2+6, 12, c.h-12);
+  ctx.fillStyle = edges[c.typeIdx];
+  ctx.fillRect(-sw/2+8, -5, sw-16, 10);
+  ctx.fillRect(-6, -sh/2+6, 12, sh-12);
 
-  if(c.crack > .12){
+  if(c.crack && c.crack > .12){
     ctx.globalAlpha = Math.min(.95, c.crack + .15);
     ctx.strokeStyle = "rgba(35,25,20,.95)";
     ctx.lineWidth = 2.2;
     ctx.beginPath();
-    ctx.moveTo(-8, -c.h*.32);
-    ctx.lineTo(0, -c.h*.12);
-    ctx.lineTo(-5, c.h*.02);
-    ctx.lineTo(8, c.h*.20);
-    if(c.crack>.45){ ctx.moveTo(0,-c.h*.12); ctx.lineTo(16,-c.h*.25); }
-    if(c.crack>.7){ ctx.moveTo(-5,c.h*.02); ctx.lineTo(-20,c.h*.18); }
+    ctx.moveTo(-8, -sh*.32);
+    ctx.lineTo(0, -sh*.12);
+    ctx.lineTo(-5, sh*.02);
+    ctx.lineTo(8, sh*.20);
+    if(c.crack>.45){ ctx.moveTo(0,-sh*.12); ctx.lineTo(16,-sh*.25); }
+    if(c.crack>.7){ ctx.moveTo(-5,sh*.02); ctx.lineTo(-20,sh*.18); }
     ctx.stroke();
   }
 
   ctx.globalAlpha = 1;
   ctx.fillStyle = "rgba(0,0,0,.52)";
-  roundRect(-28, -c.h/2-30, 56, 21, 10);
+  roundRect(-28, -sh/2-30, 56, 21, 10);
   ctx.fill();
   ctx.fillStyle = "#fff";
   ctx.font = "bold 14px Arial";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(tInfo.multi+"x", 0, -c.h/2-19);
+  ctx.fillText(c.multi+"x", 0, -sh/2-19);
 
-  const barW = c.w * .78;
+  const barW = sw * .78;
   ctx.fillStyle = "rgba(0,0,0,.35)";
-  roundRect(-barW/2, c.h/2+8, barW, 7, 4);
+  roundRect(-barW/2, sh/2+8, barW, 7, 4);
   ctx.fill();
-  ctx.fillStyle = c.crack>.7 ? "#ffe66d" : "#7cf2ff";
-  roundRect(-barW/2, c.h/2+8, barW*c.crack, 7, 4);
-  ctx.fill();
+  
+  if (c.crack) {
+    ctx.fillStyle = c.crack>.7 ? "#ffe66d" : "#7cf2ff";
+    roundRect(-barW/2, sh/2+8, barW*c.crack, 7, 4);
+    ctx.fill();
+  }
 
   if(lockedCrate === c){
     ctx.strokeStyle = "#ffef5e";
     ctx.lineWidth = 3;
     ctx.setLineDash([7,5]);
-    roundRect(-c.w/2-8, -c.h/2-8, c.w+16, c.h+16, 14);
+    roundRect(-sw/2-8, -sh/2-8, sw+16, sh+16, 14);
     ctx.stroke();
     ctx.setLineDash([]);
   }
@@ -415,24 +457,49 @@ function drawCannon(){
   ctx.restore();
 }
 
+function drawOpponentCannon(){
+  const cx = W/2, cy = 62;
+  let sAngle = peerAngle;
+  if (myRole === 'bottom') sAngle = peerAngle + Math.PI;
+  if (myRole === 'top') sAngle = peerAngle;
+  
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(sAngle);
+  ctx.fillStyle = "#ff6b6b";
+  roundRect(0,-12,58,24,12); ctx.fill();
+  ctx.strokeStyle = "#a92222"; ctx.lineWidth = 4; ctx.stroke();
+  ctx.restore();
+  
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.fillStyle = "#ff4b4b";
+  ctx.beginPath(); ctx.arc(0,0,30,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle = "#ffcccc"; ctx.lineWidth = 4; ctx.stroke();
+  ctx.fillStyle = "#fff";
+  ctx.font = "bold 14px Arial"; ctx.textAlign="center"; ctx.textBaseline="middle";
+  ctx.fillText(peerLevel+"x",0,2);
+  ctx.restore();
+}
+
 function drawUI(){
   ctx.fillStyle = "rgba(0,0,0,.35)";
-  roundRect(16,14,190,42,16); ctx.fill();
+  roundRect(16,H-90,190,42,16); ctx.fill();
   ctx.fillStyle = "#ffd76a";
-  ctx.beginPath(); ctx.arc(39,35,13,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(39,H-69,13,0,Math.PI*2); ctx.fill();
   ctx.fillStyle = "#fff";
   ctx.font = "bold 20px Arial";
   ctx.textAlign = "left"; ctx.textBaseline="middle";
-  ctx.fillText(Math.floor(coins), 60, 35);
+  ctx.fillText(Math.floor(coins), 60, H-69);
 
   ctx.font = "13px Arial";
   ctx.fillStyle = "rgba(255,255,255,.72)";
-  ctx.fillText(t('cost') + cannonLevel + t('coins'), 16, 70);
+  ctx.fillText(t('cost') + cannonLevel + t('coins'), 16, H-35);
 
   ctx.fillStyle = "rgba(255,255,255,.62)";
   ctx.font = "12px Arial"; ctx.textAlign="right";
   const rate = totalShots ? Math.round(totalWins/totalShots*1000)/10 : 0;
-  ctx.fillText(t('shots') + " " + totalShots + " / " + t('wins') + " " + totalWins + " / " + rate + "%", W-18, 68);
+  ctx.fillText(t('shots') + " " + totalShots + " / " + t('wins') + " " + totalWins + " / " + rate + "%", W-18, H-37);
 
   const { radius, spacing, startX, skillY } = getUiLayout();
   
@@ -461,7 +528,7 @@ function drawUI(){
     ctx.fillText(b.sub, b.x, skillY + 10);
   }
 
-  // Language toggle button (top right corner)
+  // Language toggle button
   ctx.beginPath();
   ctx.arc(W - 35, 30, 18, 0, Math.PI*2);
   ctx.fillStyle = "rgba(255,255,255,.15)";
@@ -473,13 +540,31 @@ function drawUI(){
   ctx.font = "bold 13px Arial";
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
   ctx.fillText(t('langToggle'), W - 35, 30);
+  
+  // Switch Room button
+  ctx.beginPath();
+  ctx.arc(W - 85, 30, 18, 0, Math.PI*2);
+  ctx.fillStyle = "rgba(233,69,96,.7)";
+  ctx.fill();
+  ctx.strokeStyle = "#ffb6c1";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.fillStyle = "#fff";
+  ctx.font = "bold 11px Arial";
+  ctx.fillText(t('switchRoom'), W - 85, 30);
+  
+  // Room ID
+  ctx.fillStyle = "rgba(255,255,255,.5)";
+  ctx.font = "12px Arial";
+  ctx.textAlign = "left";
+  ctx.fillText(t('room') + (roomId || "..."), 16, 25);
 
   if(freezeTimer > 0){
     ctx.fillStyle = "rgba(124,220,255,.18)";
     ctx.fillRect(0,0,W,H);
     ctx.fillStyle = "#dff8ff";
     ctx.font = "bold 18px Arial"; ctx.textAlign="center";
-    ctx.fillText("FREEZE", W/2, 104);
+    ctx.fillText("FREEZE", W/2, H/2);
   }
 }
 
@@ -501,10 +586,20 @@ function draw(){
   for(const c of crates) drawCrate(c);
 
   for(const b of bullets){
+    const {x:sx, y:sy} = toScreen(b.lx, b.ly);
     ctx.save();
     ctx.shadowColor = "#fff6a6"; ctx.shadowBlur = 12;
     ctx.fillStyle = "#fff0a0";
-    ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(sx,sy,b.r,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+  
+  for(const b of peerBullets){
+    const {x:sx, y:sy} = toScreen(b.lx, b.ly);
+    ctx.save();
+    ctx.shadowColor = "#ffbaba"; ctx.shadowBlur = 12;
+    ctx.fillStyle = "#ff8a8a";
+    ctx.beginPath(); ctx.arc(sx,sy,4 + Math.log2(b.power+1)*1.5,0,Math.PI*2); ctx.fill();
     ctx.restore();
   }
 
@@ -523,6 +618,7 @@ function draw(){
   }
 
   drawCannon();
+  drawOpponentCannon();
 
   for(const f of floatTexts){
     ctx.globalAlpha = Math.max(0, Math.min(1, f.life/25));
@@ -556,16 +652,12 @@ function loop(timestamp){
   if (!lastTime) lastTime = timestamp;
   let dt = timestamp - lastTime;
   lastTime = timestamp;
-  
-  if (dt > 250) dt = 16.666; // 限制最大间隔防止积压崩溃
-  
+  if (dt > 250) dt = 16.666; 
   accumulator += dt;
-  // 固定逻辑步长为 1/60 秒
   while (accumulator >= 16.666) {
     update();
     accumulator -= 16.666;
   }
-  
   draw();
   requestAnimationFrame(loop);
 }
@@ -573,26 +665,18 @@ requestAnimationFrame(loop);
 
 function isUiPoint(x,y){
   const { radius, spacing, startX, skillY, cannonBtnW, cannonBtnH, cannonBtnOffset, cx, cy } = getUiLayout();
-  
-  // 检查加减倍率按钮
   if(y>=cy-cannonBtnH/2 && y<=cy+cannonBtnH/2 && ((x>=cx-cannonBtnOffset-cannonBtnW/2 && x<=cx-cannonBtnOffset+cannonBtnW/2) || (x>=cx+cannonBtnOffset-cannonBtnW/2 && x<=cx+cannonBtnOffset+cannonBtnW/2))) return true;
-  
-  // 检查底部技能按钮
   for(let i=0; i<3; i++){
     let bx = startX + i * spacing;
     if(Math.hypot(x - bx, y - skillY) <= radius) return true;
   }
-  
-  // Language toggle
   if (Math.hypot(x - (W - 35), y - 30) <= 18) return true;
-
+  if (Math.hypot(x - (W - 85), y - 30) <= 18) return true;
   return false;
 }
 
 function handleUiClick(x, y) {
-  const { radius, spacing, startX, skillY, cannonBtnW, cannonBtnOffset, cx, cy } = getUiLayout();
-  
-  // 底部技能按钮
+  const { radius, spacing, startX, skillY, cannonBtnW, cannonBtnH, cannonBtnOffset, cx, cy } = getUiLayout();
   for(let i=0; i<3; i++){
     let bx = startX + i * spacing;
     if(Math.hypot(x - bx, y - skillY) <= radius){
@@ -602,37 +686,43 @@ function handleUiClick(x, y) {
         if(freezeCd <= 0){
           freezeTimer = 300;
           freezeCd = 900;
+          socket.emit('skill', { type: 'freeze' });
         }
         return true;
       }
     }
   }
 
-  // 语言切换
   if (Math.hypot(x - (W - 35), y - 30) <= 18) {
     currentLang = currentLang === 'en' ? 'zh' : 'en';
     const hintEl = document.querySelector('.hint');
     if (hintEl) hintEl.innerText = t('hint');
     return true;
   }
+  
+  if (Math.hypot(x - (W - 85), y - 30) <= 18) {
+    socket.emit('switch_room', {}, (res) => {
+      roomId = res.roomId;
+      myRole = res.role;
+      crates = [];
+      peerBullets = [];
+    });
+    return true;
+  }
 
-  // 倍率调节
   if(y>=cy-cannonBtnH/2 && y<=cy+cannonBtnH/2) {
     if(x>=cx-cannonBtnOffset-cannonBtnW/2 && x<=cx-cannonBtnOffset+cannonBtnW/2) {
-      adjustLevel(-1);
-      return true;
+      adjustLevel(-1); return true;
     }
     if(x>=cx+cannonBtnOffset-cannonBtnW/2 && x<=cx+cannonBtnOffset+cannonBtnW/2) {
-      adjustLevel(1);
-      return true;
+      adjustLevel(1); return true;
     }
   }
 
   if(lockMode){
     const c = crateAt(x, y);
-    if(c){ lockedCrate = c; target.x = c.x; target.y = c.y; return true; }
+    if(c){ lockedCrate = c; target.x = x; target.y = y; return true; }
   }
-  
   return false;
 }
 
@@ -645,8 +735,6 @@ function setTarget(e){
 }
 
 canvas.addEventListener("mousemove", setTarget);
-
-// 使用 mousedown 和 touchstart 统一处理开火和UI点击
 canvas.addEventListener("mousedown", e=>{ 
   if(isUiPoint(e.clientX, e.clientY)) {
     handleUiClick(e.clientX, e.clientY);
@@ -684,8 +772,6 @@ function adjustLevel(delta){
   idx = Math.max(0, Math.min(levels.length-1, idx + delta));
   cannonLevel = levels[idx];
 }
-
-for(let i=0;i<2;i++) setTimeout(spawnGroup, i*600);
 
 document.addEventListener('DOMContentLoaded', () => {
     const hintEl = document.querySelector('.hint');

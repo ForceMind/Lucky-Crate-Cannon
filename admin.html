@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>Lucky Crate Cannon - 控制台</title>
+<title>Lucky Crate Cannon - 双人联机控制台</title>
 <link rel="icon" href="favicon.png" type="image/png" />
 <style>
   body { background: #0f172a; color: #f8fafc; font-family: system-ui, sans-serif; margin: 0; padding: 20px; }
@@ -35,12 +35,11 @@
 </head>
 <body>
 <div class="header">
-  <h1>🚀 Lucky Crate Cannon 监控中心</h1>
+  <h1>🚀 双人联机与风控中心</h1>
   <div id="connection-status" style="color:#22c55e; font-size:0.9rem;">🟢 实时数据更新中...</div>
 </div>
 
 <div class="grid">
-  <!-- 左侧：控制面板 -->
   <div class="card">
     <h2>全局配置</h2>
     <div class="input-group">
@@ -52,21 +51,20 @@
         * <b>0</b>: 原生爆率 (100% 公平)<br>
         * <b>3</b>: 平台占优3% (玩家胜率97%)<br>
         * <b>-2</b>: 平台让利2% (玩家胜率102%)<br><br>
-        <i>注意：当系统检测到某个玩家 RTP 过高或过低时，会自动覆盖此默认值进行针对性调控。</i>
+        <i>注意：多轨制风控会优先执行“两人贫富差距打压机制”，其次执行“房间80%兜底放水机制”，最后兜底此全局概率。</i>
       </div>
     </div>
   </div>
 
-  <!-- 右侧：全局统计 -->
   <div class="card">
-    <h2>全服数据总览</h2>
+    <h2>全服数据总览 (运行中房间: <span id="g_rooms">0</span>)</h2>
     <div class="stats-grid">
       <div class="stat-box">
         <div class="stat-label">总发射 / 总击破</div>
         <div class="stat-val"><span id="g_shots">0</span> / <span id="g_wins">0</span></div>
       </div>
       <div class="stat-box">
-        <div class="stat-label">消耗 / 产出 (金币)</div>
+        <div class="stat-label">总消耗 / 总产出 (金币)</div>
         <div class="stat-val"><span id="g_spent">0</span> / <span id="g_reward">0</span></div>
       </div>
       <div class="stat-box">
@@ -74,28 +72,27 @@
         <div class="stat-val" id="g_rate">0.0%</div>
       </div>
       <div class="stat-box">
-        <div class="stat-label">全服返奖率 (RTP)</div>
+        <div class="stat-label">全服综合返奖率 (RTP)</div>
         <div class="stat-val" id="g_rtp">0.0%</div>
       </div>
     </div>
   </div>
 </div>
 
-<!-- 底部：在线玩家监控 -->
 <div class="card" style="margin-top: 20px;">
-  <h2>在线玩家实时风控 (<span id="player_count">0</span> 人)</h2>
+  <h2>联机监控与独立风控状态 (<span id="player_count">0</span> 人在线)</h2>
   <table>
     <thead>
       <tr>
-        <th>连接 ID (Session)</th>
-        <th>发射次数</th>
+        <th>Session ID</th>
+        <th>所在房间</th>
         <th>消耗金币</th>
         <th>个人 RTP</th>
+        <th>房间保底Buff</th>
         <th>当前执行风控率</th>
       </tr>
     </thead>
     <tbody id="player_tbody">
-      <!-- js render -->
     </tbody>
   </table>
 </div>
@@ -103,7 +100,6 @@
 <script>
 function fetchStats() {
   fetch('/api/admin/stats').then(res=>res.json()).then(data => {
-    // Global
     const g = data.globalStats;
     document.getElementById('g_shots').innerText = g.totalShots;
     document.getElementById('g_wins').innerText = g.totalWins;
@@ -116,34 +112,42 @@ function fetchStats() {
     let rtp = g.totalCoinsSpent > 0 ? (g.totalCoinsRewarded / g.totalCoinsSpent * 100).toFixed(2) : "0.00";
     document.getElementById('g_rtp').innerText = rtp + "%";
 
-    // Players
+    document.getElementById('g_rooms').innerText = data.activeRooms ? data.activeRooms.length : 0;
+
     const pTable = document.getElementById('player_tbody');
     document.getElementById('player_count').innerText = data.onlinePlayers.length;
     pTable.innerHTML = '';
     
     if (data.onlinePlayers.length === 0) {
-      pTable.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#64748b; padding:20px;">当前暂无玩家在线</td></tr>';
+      pTable.innerHTML = '<tr><td colspan="6" style="text-align:center; color:#64748b; padding:20px;">当前暂无玩家在线</td></tr>';
       return;
     }
 
+    const roomData = {};
+    if(data.activeRooms) data.activeRooms.forEach(r => { roomData[r.id] = r; });
+
     data.onlinePlayers.forEach(p => {
       const tr = document.createElement('tr');
+      const r = roomData[p.roomId];
       
       let tagClass = 'default';
       let tagText = '默认 (' + p.currentAdvantage + '%)';
       if (p.currentAdvantage >= 20) {
-        tagClass = 'nerf'; tagText = '高压制 (' + p.currentAdvantage + '%)';
+        tagClass = 'nerf'; tagText = '差距压制 (' + p.currentAdvantage + '%)';
       } else if (p.currentAdvantage <= -15) {
-        tagClass = 'buff'; tagText = '大放水 (' + p.currentAdvantage + '%)';
+        tagClass = 'buff'; tagText = '放水补偿 (' + p.currentAdvantage + '%)';
       } else if (p.currentAdvantage !== data.globalDefaultAdvantage) {
         tagClass = 'default'; tagText = '定制 (' + p.currentAdvantage + '%)';
       }
 
+      let roomBuff = (r && r.adv === -15) ? '<span class="tag buff">房间启动(-15%)</span>' : '-';
+
       tr.innerHTML = `
-        <td style="color:#94a3b8; font-family:monospace;">${p.id}</td>
-        <td>${p.shots}</td>
+        <td style="color:#94a3b8; font-family:monospace;">${p.id.substring(0,8)}...</td>
+        <td style="font-weight:bold; color:#f1f5f9;">房间 ${p.roomId || '-'}</td>
         <td>${p.spent}</td>
         <td style="color: ${p.rtp > 100 ? '#22c55e' : (p.rtp < 80 ? '#e11d48' : '#f8fafc')}">${p.rtp}%</td>
+        <td>${roomBuff}</td>
         <td><span class="tag ${tagClass}">${tagText}</span></td>
       `;
       pTable.appendChild(tr);
