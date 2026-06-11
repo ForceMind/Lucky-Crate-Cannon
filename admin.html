@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lucky Crate Cannon - 后台管理</title>
+<style>
+  body {
+    background-color: #1a1a2e;
+    color: #e0e0e0;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    margin: 0;
+  }
+  .container {
+    background-color: #16213e;
+    padding: 30px;
+    border-radius: 12px;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.5);
+    width: 400px;
+    text-align: center;
+  }
+  h1 {
+    font-size: 24px;
+    margin-bottom: 20px;
+    color: #0f3460;
+    text-shadow: 1px 1px 2px #e94560;
+  }
+  .control-group {
+    margin: 20px 0;
+  }
+  label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: bold;
+  }
+  input[type="number"] {
+    width: 80%;
+    padding: 10px;
+    font-size: 16px;
+    border: none;
+    border-radius: 6px;
+    background-color: #0f3460;
+    color: #fff;
+    text-align: center;
+    outline: none;
+  }
+  button {
+    background-color: #e94560;
+    color: white;
+    border: none;
+    padding: 12px 24px;
+    font-size: 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+    font-weight: bold;
+    width: 100%;
+  }
+  button:hover {
+    background-color: #d13d56;
+  }
+  .status {
+    margin-top: 15px;
+    font-size: 14px;
+    color: #4caf50;
+    height: 20px;
+  }
+  .help-text {
+    font-size: 12px;
+    color: #888;
+    margin-top: 10px;
+    text-align: left;
+    line-height: 1.5;
+  }
+  .stats-board {
+    margin-top: 30px;
+    background-color: #0f3460;
+    padding: 15px;
+    border-radius: 8px;
+    text-align: left;
+  }
+  .stats-board h2 {
+    font-size: 18px;
+    margin-top: 0;
+    margin-bottom: 15px;
+    color: #e94560;
+  }
+  .stat-item {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    font-size: 14px;
+  }
+  .stat-value {
+    font-weight: bold;
+    color: #fff;
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h1>平台概率管理</h1>
+  
+  <div class="control-group">
+    <label for="advantage">平台概率优势 (%)</label>
+    <input type="number" id="advantage" step="1" value="0">
+    <div class="help-text">
+      * 输入 <b>0</b> 表示正常原概率。<br>
+      * 输入 <b>3</b> 表示平台占据3%优势（即玩家胜率变成原来的97%）。<br>
+      * 输入 <b>-2</b> 表示平台让利2%（即玩家胜率变成原来的102%）。
+    </div>
+  </div>
+
+  <button onclick="saveAdvantage()">保存设置</button>
+  <div id="status" class="status"></div>
+
+  <div class="stats-board">
+    <h2>实时数据看板</h2>
+    <div class="stat-item"><span>总发射次数:</span> <span class="stat-value" id="s_shots">0</span></div>
+    <div class="stat-item"><span>总击破数:</span> <span class="stat-value" id="s_wins">0</span></div>
+    <div class="stat-item"><span>总消耗金币:</span> <span class="stat-value" id="s_spent">0</span></div>
+    <div class="stat-item"><span>总产出金币:</span> <span class="stat-value" id="s_rewarded">0</span></div>
+    <div class="stat-item" style="margin-top: 10px; border-top: 1px solid #1a1a2e; padding-top: 10px;">
+      <span>实际玩家综合爆率:</span> <span class="stat-value" id="s_rate">0.0%</span>
+    </div>
+    <div class="stat-item">
+      <span>返奖率 (RTP):</span> <span class="stat-value" id="s_rtp">0.0%</span>
+    </div>
+  </div>
+</div>
+
+<script>
+  // 获取当前优势系数
+  function loadAdvantage() {
+    fetch('/api/admin/advantage')
+      .then(res => res.json())
+      .then(data => {
+        document.getElementById('advantage').value = data.advantage;
+      })
+      .catch(err => console.error(err));
+  }
+
+  // 加载实时数据
+  function loadStats() {
+    fetch('/api/admin/stats')
+      .then(res => res.json())
+      .then(data => {
+        document.getElementById('s_shots').innerText = data.totalShots;
+        document.getElementById('s_wins').innerText = data.totalWins;
+        document.getElementById('s_spent').innerText = data.totalCoinsSpent;
+        document.getElementById('s_rewarded').innerText = data.totalCoinsRewarded;
+        
+        let rate = data.totalShots > 0 ? (data.totalWins / data.totalShots * 100).toFixed(2) : "0.00";
+        document.getElementById('s_rate').innerText = rate + "%";
+        
+        let rtp = data.totalCoinsSpent > 0 ? (data.totalCoinsRewarded / data.totalCoinsSpent * 100).toFixed(2) : "0.00";
+        document.getElementById('s_rtp').innerText = rtp + "%";
+      })
+      .catch(err => console.error(err));
+  }
+
+  // 保存优势系数
+  function saveAdvantage() {
+    const val = parseFloat(document.getElementById('advantage').value) || 0;
+    const statusEl = document.getElementById('status');
+    
+    fetch('/api/admin/advantage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ advantage: val })
+    })
+    .then(res => res.json())
+    .then(data => {
+      if (data.success) {
+        statusEl.style.color = '#4caf50';
+        statusEl.innerText = '保存成功！当前平台优势: ' + data.advantage + '%';
+        setTimeout(() => { statusEl.innerText = ''; }, 3000);
+      } else {
+        statusEl.style.color = '#f44336';
+        statusEl.innerText = '保存失败: ' + data.error;
+      }
+    })
+    .catch(err => {
+      statusEl.style.color = '#f44336';
+      statusEl.innerText = '网络错误';
+    });
+  }
+
+  // 初始化
+  loadAdvantage();
+  loadStats();
+  
+  // 每 2 秒刷新一次数据
+  setInterval(loadStats, 2000);
+</script>
+
+</body>
+</html>
