@@ -20,6 +20,7 @@ const i18n = {
     almostBreak: "Crack",
     hit: "Hit",
     paused: "PAUSED",
+    hint: "Auto/Lock/Freeze · - / + to adjust cannon",
     langToggle: "中" // 显示能切换到的语言
   },
   zh: {
@@ -38,6 +39,7 @@ const i18n = {
     almostBreak: "快碎了",
     hit: "命中",
     paused: "暂停",
+    hint: "自动开火/锁定/冷冻技能 · 炮台旁 - / + 调整炮倍",
     langToggle: "EN"
   }
 };
@@ -401,9 +403,10 @@ function drawCannon(){
   ctx.font = "bold 18px Arial"; ctx.textAlign="center"; ctx.textBaseline="middle";
   ctx.fillText(cannonLevel+"x",0,2);
 
+  const btnY = -cannonBtnH / 2;
   ctx.fillStyle = "rgba(255,255,255,.20)";
-  roundRect(-cannonBtnOffset - cannonBtnW/2, -17, cannonBtnW, cannonBtnH, 12); ctx.fill();
-  roundRect(cannonBtnOffset - cannonBtnW/2, -17, cannonBtnW, cannonBtnH, 12); ctx.fill();
+  roundRect(-cannonBtnOffset - cannonBtnW/2, btnY, cannonBtnW, cannonBtnH, 12); ctx.fill();
+  roundRect(cannonBtnOffset - cannonBtnW/2, btnY, cannonBtnW, cannonBtnH, 12); ctx.fill();
   ctx.fillStyle = "#ffffff";
   ctx.font = "bold 24px Arial";
   ctx.fillText("-", -cannonBtnOffset, 1);
@@ -572,7 +575,7 @@ function isUiPoint(x,y){
   const { radius, spacing, startX, skillY, cannonBtnW, cannonBtnH, cannonBtnOffset, cx, cy } = getUiLayout();
   
   // 检查加减倍率按钮
-  if(y>=cy-17 && y<=cy+17 && ((x>=cx-cannonBtnOffset-cannonBtnW/2 && x<=cx-cannonBtnOffset+cannonBtnW/2) || (x>=cx+cannonBtnOffset-cannonBtnW/2 && x<=cx+cannonBtnOffset+cannonBtnW/2))) return true;
+  if(y>=cy-cannonBtnH/2 && y<=cy+cannonBtnH/2 && ((x>=cx-cannonBtnOffset-cannonBtnW/2 && x<=cx-cannonBtnOffset+cannonBtnW/2) || (x>=cx+cannonBtnOffset-cannonBtnW/2 && x<=cx+cannonBtnOffset+cannonBtnW/2))) return true;
   
   // 检查底部技能按钮
   for(let i=0; i<3; i++){
@@ -614,7 +617,7 @@ function handleUiClick(x, y) {
   }
 
   // 倍率调节
-  if(y>=cy-17 && y<=cy+17) {
+  if(y>=cy-cannonBtnH/2 && y<=cy+cannonBtnH/2) {
     if(x>=cx-cannonBtnOffset-cannonBtnW/2 && x<=cx-cannonBtnOffset+cannonBtnW/2) {
       adjustLevel(-1);
       return true;
@@ -636,6 +639,7 @@ function handleUiClick(x, y) {
 function setTarget(e){
   const rect = canvas.getBoundingClientRect();
   const p = e.touches ? e.touches[0] : e;
+  if(isUiPoint(p.clientX, p.clientY)) return;
   target.x = p.clientX - rect.left;
   target.y = p.clientY - rect.top;
 }
