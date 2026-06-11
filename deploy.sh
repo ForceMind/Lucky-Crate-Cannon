@@ -84,23 +84,25 @@ else
     echo "未找到 npx，跳过前端代码混淆。"
 fi
 
-echo "[6/7] 检查端口占用情况..."
-PORT_CONFLICT=0
-if command -v ss >/dev/null; then
-    if $SUDO ss -tuln | grep ":3000 " > /dev/null; then
-        PORT_CONFLICT=1
+echo "[6/7] 检查并分配可用端口..."
+APP_PORT=3000
+while true; do
+    PORT_IN_USE=0
+    if command -v ss >/dev/null; then
+        if $SUDO ss -tuln | grep -E ":$APP_PORT\b" > /dev/null; then PORT_IN_USE=1; fi
+    elif command -v netstat >/dev/null; then
+        if $SUDO netstat -tuln | grep -E ":$APP_PORT\b" > /dev/null; then PORT_IN_USE=1; fi
     fi
-elif command -v netstat >/dev/null; then
-    if $SUDO netstat -tuln | grep ":3000 " > /dev/null; then
-        PORT_CONFLICT=1
+    
+    if [ "$PORT_IN_USE" -eq 1 ]; then
+        echo "端口 $APP_PORT 被占用，正在检测下一个端口..."
+        APP_PORT=$((APP_PORT+1))
+    else
+        break
     fi
-fi
+done
 
-if [ "$PORT_CONFLICT" -eq 1 ]; then
-    echo "⚠️ 严重警告：端口 3000 仍被其他未知服务占用！本服务启动可能会失败。请检查并释放端口 3000。"
-else
-    echo "端口 3000 状态正常空闲。"
-fi
+echo "✅ 成功分配空闲端口: $APP_PORT"
 
 echo "[7/7] 配置并启动 Systemd 服务..."
 SERVICE_FILE="/etc/systemd/system/lucky-crate.service"
@@ -118,6 +120,7 @@ WorkingDirectory=$WORK_DIR
 Restart=always
 User=$USER
 Environment=NODE_ENV=production
+Environment=PORT=$APP_PORT
 
 [Install]
 WantedBy=multi-user.target
@@ -129,6 +132,6 @@ $SUDO systemctl restart lucky-crate
 
 echo "========================================="
 echo "更新/部署完成！"
-echo "游戏前端页面请访问: http://你的服务器IP:3000"
-echo "游戏后台管理请访问: http://你的服务器IP:3000/admin"
+echo "游戏前端页面请访问: http://你的服务器IP:$APP_PORT"
+echo "游戏后台管理请访问: http://你的服务器IP:$APP_PORT/admin"
 echo "========================================="
