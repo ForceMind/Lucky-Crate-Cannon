@@ -19,7 +19,7 @@ const i18n = {
     almostBreak: "Crack",
     hit: "Hit",
     paused: "PAUSED",
-    langToggle: "EN"
+    langToggle: "中" // 显示能切换到的语言
   },
   zh: {
     boxes: ["木箱", "绿箱", "蓝箱", "紫箱", "红箱", "银箱", "金箱", "宝石箱", "王冠箱", "传奇箱"],
@@ -37,7 +37,7 @@ const i18n = {
     almostBreak: "快碎了",
     hit: "命中",
     paused: "暂停",
-    langToggle: "中"
+    langToggle: "EN"
   }
 };
 function t(key, idx = -1) {
@@ -58,6 +58,24 @@ function resize(){
 }
 window.addEventListener("resize", resize);
 resize();
+
+function getUiLayout() {
+  const isMobile = W < 600;
+  const radius = isMobile ? 22 : 30;
+  const spacing = isMobile ? 52 : 75;
+  // 移动端排在左下角，避开中间的炮台；PC端排在右下角
+  const startX = isMobile ? 10 + radius : W - spacing * 3 + 10;
+  const skillY = H - (isMobile ? 35 : 45);
+  const cannonBtnW = isMobile ? 34 : 42;
+  const cannonBtnH = isMobile ? 28 : 34;
+  const cannonBtnOffset = isMobile ? 55 : 71;
+  const cx = W/2, cy = H - 62;
+  
+  return { 
+    isMobile, radius, spacing, startX, skillY, 
+    cannonBtnW, cannonBtnH, cannonBtnOffset, cx, cy 
+  };
+}
 
 const boxTypes = [
   {nameIdx:0, color:"#B97843", edge:"#7b4a25", multi:2,   chance:.5, w:62, h:48, speed:.85, weight:26},
@@ -124,11 +142,16 @@ function spawnGroup(){
   }
 }
 
+function getBulletSpeed(level) {
+  // 子弹速度跟随倍率增加
+  return 10 + Math.log2(level) * 4; 
+}
+
 function fire(){
   if(coins < cannonLevel) return;
   coins -= cannonLevel;
   totalShots++;
-  const cx = W/2, cy = H - 62;
+  const { cx, cy } = getUiLayout();
   let aimX = target.x, aimY = target.y;
   if(lockMode && lockedCrate && lockedCrate.alive){
     aimX = lockedCrate.x;
@@ -137,9 +160,12 @@ function fire(){
   let dx = aimX - cx, dy = aimY - cy;
   const len = Math.max(1, Math.hypot(dx,dy));
   dx /= len; dy /= len;
+  
+  const speed = getBulletSpeed(cannonLevel);
+  
   bullets.push({
     x: cx + dx*38, y: cy + dy*38,
-    vx: dx * 13, vy: dy * 13,
+    vx: dx * speed, vy: dy * speed,
     r: 4 + Math.log2(cannonLevel+1)*1.5,
     power: cannonLevel,
     life: 1,
@@ -244,7 +270,7 @@ function update(){
       const c = b.lockedTarget;
       const dx = c.x - b.x, dy = c.y - b.y;
       const d = Math.max(1, Math.hypot(dx,dy));
-      const speed = 14;
+      const speed = getBulletSpeed(b.power);
       b.vx = dx / d * speed;
       b.vy = dy / d * speed;
       b.x += b.vx; b.y += b.vy;
@@ -277,9 +303,9 @@ function update(){
   floatTexts = floatTexts.filter(f=>f.life>0);
 
   for(const cf of coinsFly){
-    const t = .13;
-    cf.x += (cf.tx - cf.x)*t;
-    cf.y += (cf.ty - cf.y)*t;
+    const tv = .13;
+    cf.x += (cf.tx - cf.x)*tv;
+    cf.y += (cf.ty - cf.y)*tv;
     cf.life--;
   }
   coinsFly = coinsFly.filter(c=>c.life>0);
@@ -363,8 +389,9 @@ function drawCrate(c){
 }
 
 function drawCannon(){
-  const cx = W/2, cy = H - 62;
+  const { cx, cy, cannonBtnW, cannonBtnH, cannonBtnOffset } = getUiLayout();
   const ang = Math.atan2(target.y-cy, target.x-cx);
+  
   ctx.save();
   ctx.translate(cx,cy);
   ctx.rotate(ang);
@@ -382,14 +409,13 @@ function drawCannon(){
   ctx.font = "bold 18px Arial"; ctx.textAlign="center"; ctx.textBaseline="middle";
   ctx.fillText(cannonLevel+"x",0,2);
 
-  const bw = 42, bh = 34;
   ctx.fillStyle = "rgba(255,255,255,.20)";
-  roundRect(-92, -17, bw, bh, 12); ctx.fill();
-  roundRect(50, -17, bw, bh, 12); ctx.fill();
+  roundRect(-cannonBtnOffset - cannonBtnW/2, -17, cannonBtnW, cannonBtnH, 12); ctx.fill();
+  roundRect(cannonBtnOffset - cannonBtnW/2, -17, cannonBtnW, cannonBtnH, 12); ctx.fill();
   ctx.fillStyle = "#ffffff";
   ctx.font = "bold 24px Arial";
-  ctx.fillText("-", -71, 1);
-  ctx.fillText("+", 71, 1);
+  ctx.fillText("-", -cannonBtnOffset, 1);
+  ctx.fillText("+", cannonBtnOffset, 1);
 
   ctx.restore();
 }
@@ -413,11 +439,7 @@ function drawUI(){
   const rate = totalShots ? Math.round(totalWins/totalShots*1000)/10 : 0;
   ctx.fillText(t('shots') + " " + totalShots + " / " + t('wins') + " " + totalWins + " / " + rate + "%", W-18, 68);
 
-  // circular buttons
-  const radius = 30;
-  const spacing = 75;
-  const startX = W - spacing * 3 + 10;
-  const skillY = H - 45;
+  const { radius, spacing, startX, skillY } = getUiLayout();
   
   const btns = [
     {x: startX, label: autoFire ? t('auto') : t('manual'), sub: autoFire?t('on'):t('off'), active: autoFire, id: "auto"},
@@ -533,22 +555,34 @@ function draw(){
   ctx.restore();
 }
 
-function loop(){
-  update();
+let lastTime = 0;
+let accumulator = 0;
+function loop(timestamp){
+  if (!lastTime) lastTime = timestamp;
+  let dt = timestamp - lastTime;
+  lastTime = timestamp;
+  
+  if (dt > 250) dt = 16.666; // 限制最大间隔防止积压崩溃
+  
+  accumulator += dt;
+  // 固定逻辑步长为 1/60 秒
+  while (accumulator >= 16.666) {
+    update();
+    accumulator -= 16.666;
+  }
+  
   draw();
   requestAnimationFrame(loop);
 }
-loop();
+requestAnimationFrame(loop);
 
 function isUiPoint(x,y){
-  const cx = W/2, cy = H - 62;
-  const radius = 30;
-  const spacing = 75;
-  const startX = W - spacing * 3 + 10;
-  const skillY = H - 45;
+  const { radius, spacing, startX, skillY, cannonBtnW, cannonBtnH, cannonBtnOffset, cx, cy } = getUiLayout();
   
-  if(y>=cy-17 && y<=cy+17 && ((x>=cx-92 && x<=cx-50) || (x>=cx+50 && x<=cx+92))) return true;
+  // 检查加减倍率按钮
+  if(y>=cy-17 && y<=cy+17 && ((x>=cx-cannonBtnOffset-cannonBtnW/2 && x<=cx-cannonBtnOffset+cannonBtnW/2) || (x>=cx+cannonBtnOffset-cannonBtnW/2 && x<=cx+cannonBtnOffset+cannonBtnW/2))) return true;
   
+  // 检查底部技能按钮
   for(let i=0; i<3; i++){
     let bx = startX + i * spacing;
     if(Math.hypot(x - bx, y - skillY) <= radius) return true;
@@ -560,6 +594,53 @@ function isUiPoint(x,y){
   return false;
 }
 
+function handleUiClick(x, y) {
+  const { radius, spacing, startX, skillY, cannonBtnW, cannonBtnOffset, cx, cy } = getUiLayout();
+  
+  // 底部技能按钮
+  for(let i=0; i<3; i++){
+    let bx = startX + i * spacing;
+    if(Math.hypot(x - bx, y - skillY) <= radius){
+      if(i === 0) { autoFire = !autoFire; return true; }
+      if(i === 1) { lockMode = !lockMode; if(!lockMode) lockedCrate = null; return true; }
+      if(i === 2) {
+        if(freezeCd <= 0){
+          freezeTimer = 300;
+          freezeCd = 900;
+        }
+        return true;
+      }
+    }
+  }
+
+  // 语言切换
+  if (Math.hypot(x - (W - 35), y - 30) <= 18) {
+    currentLang = currentLang === 'en' ? 'zh' : 'en';
+    const hintEl = document.querySelector('.hint');
+    if (hintEl) hintEl.innerText = t('hint');
+    return true;
+  }
+
+  // 倍率调节
+  if(y>=cy-17 && y<=cy+17) {
+    if(x>=cx-cannonBtnOffset-cannonBtnW/2 && x<=cx-cannonBtnOffset+cannonBtnW/2) {
+      adjustLevel(-1);
+      return true;
+    }
+    if(x>=cx+cannonBtnOffset-cannonBtnW/2 && x<=cx+cannonBtnOffset+cannonBtnW/2) {
+      adjustLevel(1);
+      return true;
+    }
+  }
+
+  if(lockMode){
+    const c = crateAt(x, y);
+    if(c){ lockedCrate = c; target.x = c.x; target.y = c.y; return true; }
+  }
+  
+  return false;
+}
+
 function setTarget(e){
   const rect = canvas.getBoundingClientRect();
   const p = e.touches ? e.touches[0] : e;
@@ -568,10 +649,32 @@ function setTarget(e){
 }
 
 canvas.addEventListener("mousemove", setTarget);
-canvas.addEventListener("mousedown", e=>{ setTarget(e); if(!isUiPoint(e.clientX,e.clientY)) firing = true; });
+
+// 使用 mousedown 和 touchstart 统一处理开火和UI点击
+canvas.addEventListener("mousedown", e=>{ 
+  setTarget(e); 
+  if(isUiPoint(e.clientX, e.clientY)) {
+    handleUiClick(e.clientX, e.clientY);
+  } else {
+    firing = true;
+  }
+});
 window.addEventListener("mouseup", ()=> firing = false);
-canvas.addEventListener("touchstart", e=>{ e.preventDefault(); setTarget(e); const p=e.touches[0]; if(!isUiPoint(p.clientX,p.clientY)) firing = true; }, {passive:false});
-canvas.addEventListener("touchmove", e=>{ e.preventDefault(); setTarget(e); }, {passive:false});
+
+canvas.addEventListener("touchstart", e=>{ 
+  e.preventDefault(); 
+  setTarget(e); 
+  const p=e.touches[0]; 
+  if(isUiPoint(p.clientX, p.clientY)) {
+    handleUiClick(p.clientX, p.clientY);
+  } else {
+    firing = true;
+  }
+}, {passive:false});
+canvas.addEventListener("touchmove", e=>{ 
+  e.preventDefault(); 
+  setTarget(e); 
+}, {passive:false});
 canvas.addEventListener("touchend", ()=> firing = false);
 
 window.addEventListener("keydown", e=>{
@@ -579,56 +682,12 @@ window.addEventListener("keydown", e=>{
   if(e.key === "-" || e.key === "_") adjustLevel(-1);
   if(e.key === "=" || e.key === "+") adjustLevel(1);
 });
+
 function adjustLevel(delta){
   let idx = levels.indexOf(cannonLevel);
   idx = Math.max(0, Math.min(levels.length-1, idx + delta));
   cannonLevel = levels[idx];
 }
-canvas.addEventListener("click", e=>{
-  const cx = W/2, cy = H - 62;
-
-  const radius = 30;
-  const spacing = 75;
-  const startX = W - spacing * 3 + 10;
-  const skillY = H - 45;
-  
-  for(let i=0; i<3; i++){
-    let bx = startX + i * spacing;
-    if(Math.hypot(e.clientX - bx, e.clientY - skillY) <= radius){
-      if(i === 0) { autoFire = !autoFire; return; }
-      if(i === 1) { lockMode = !lockMode; if(!lockMode) lockedCrate = null; return; }
-      if(i === 2) {
-        if(freezeCd <= 0){
-          freezeTimer = 300;
-          freezeCd = 900;
-        }
-        return;
-      }
-    }
-  }
-
-  // lang toggle
-  if (Math.hypot(e.clientX - (W - 35), e.clientY - 30) <= 18) {
-    currentLang = currentLang === 'en' ? 'zh' : 'en';
-    const hintEl = document.querySelector('.hint');
-    if (hintEl) hintEl.innerText = t('hint');
-    return;
-  }
-
-  if(e.clientX>=cx-92 && e.clientX<=cx-50 && e.clientY>=cy-17 && e.clientY<=cy+17) {
-    adjustLevel(-1);
-    return;
-  }
-  if(e.clientX>=cx+50 && e.clientX<=cx+92 && e.clientY>=cy-17 && e.clientY<=cy+17) {
-    adjustLevel(1);
-    return;
-  }
-
-  if(lockMode){
-    const c = crateAt(e.clientX, e.clientY);
-    if(c){ lockedCrate = c; target.x = c.x; target.y = c.y; return; }
-  }
-});
 
 for(let i=0;i<2;i++) setTimeout(spawnGroup, i*600);
 
