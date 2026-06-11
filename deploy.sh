@@ -24,6 +24,8 @@ fi
 echo "[2/7] 检查并从 Git 拉取最新代码..."
 if [ -d ".git" ]; then
     if command -v git >/dev/null; then
+        echo "清理上次部署生成的混淆文件..."
+        git checkout -- game.js 2>/dev/null || true
         echo "正在执行 git pull 获取最新更新..."
         git pull || echo "Git 拉取失败或有冲突，将继续使用本地现有代码。"
     else
