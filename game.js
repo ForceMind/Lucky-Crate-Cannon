@@ -155,12 +155,13 @@ socket.on('spawn_crates', data => {
 socket.on('peer_fire', data => {
   peerAngle = data.angle;
   peerLevel = data.power;
-  const sX = 500;
-  const sY = myRole === 'bottom' ? 0 : 1000; 
+  
+  const oppCannonLogical = toLogical(W/2, 62);
   const speed = getBulletSpeed(data.power) * (LOGICAL_W / 500); 
   
   peerBullets.push({
-    lx: sX, ly: sY,
+    lx: oppCannonLogical.x + Math.cos(data.angle)*30, 
+    ly: oppCannonLogical.y + Math.sin(data.angle)*30,
     lvx: Math.cos(data.angle) * speed,
     lvy: Math.sin(data.angle) * speed,
     power: data.power,
