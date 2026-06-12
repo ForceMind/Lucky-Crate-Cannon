@@ -254,10 +254,11 @@ function fire(){
 }
 
 function crateAt(x,y){
-  const lPt = toLogical(x, y);
   for(let i=crates.length-1;i>=0;i--){
     const c = crates[i];
-    if(c.alive && lPt.x > c.x-c.w/2 && lPt.x < c.x+c.w/2 && lPt.y > c.y-c.h/2 && lPt.y < c.y+c.h/2) return c;
+    if(c.alive === false) continue;
+    const {x: csx, y: csy} = toScreen(c.x, c.y);
+    if(x > csx-c.w/2 && x < csx+c.w/2 && y > csy-c.h/2 && y < csy+c.h/2) return c;
   }
   return null;
 }
@@ -315,13 +316,15 @@ function update(){
     if(b.ly < 0){ b.ly = 0; b.lvy *= -1; }
     if(b.ly > LOGICAL_H){ b.ly = LOGICAL_H; b.lvy *= -1; }
     
+    const {x: bsx, y: bsy} = toScreen(b.lx, b.ly);
+    
     for(const c of crates){
       if(c.alive === false) continue;
-      if(b.lx > c.x-c.w/2 && b.lx < c.x+c.w/2 && b.ly > c.y-c.h/2 && b.ly < c.y+c.h/2){
+      const {x: csx, y: csy} = toScreen(c.x, c.y);
+      if(bsx > csx-c.w/2 && bsx < csx+c.w/2 && bsy > csy-c.h/2 && bsy < csy+c.h/2){
         b.life = 0;
         c.hitFlash = 10;
-        const {x:sx, y:sy} = toScreen(b.lx, b.ly);
-        for(let i=0;i<6;i++) particles.push({x:sx, y:sy, vx:(Math.random()-.5)*5, vy:(Math.random()-.5)*5, life:22, size:2+Math.random()*3});
+        for(let i=0;i<6;i++) particles.push({x:bsx, y:bsy, vx:(Math.random()-.5)*5, vy:(Math.random()-.5)*5, life:22, size:2+Math.random()*3});
         socket.emit('hit', { crateId: c.id, bulletId: b.id, multi: c.multi, ts: Date.now() });
         break;
       }
@@ -332,12 +335,13 @@ function update(){
   // Update peer bullets
   for(const b of peerBullets){
     b.lx += b.lvx; b.ly += b.lvy;
+    const {x: bsx, y: bsy} = toScreen(b.lx, b.ly);
     for(const c of crates){
       if(c.alive === false) continue;
-      if(b.lx > c.x-c.w/2 && b.lx < c.x+c.w/2 && b.ly > c.y-c.h/2 && b.ly < c.y+c.h/2){
+      const {x: csx, y: csy} = toScreen(c.x, c.y);
+      if(bsx > csx-c.w/2 && bsx < csx+c.w/2 && bsy > csy-c.h/2 && bsy < csy+c.h/2){
         b.life = 0;
-        const {x:sx, y:sy} = toScreen(b.lx, b.ly);
-        for(let i=0;i<6;i++) particles.push({x:sx, y:sy, vx:(Math.random()-.5)*5, vy:(Math.random()-.5)*5, life:22, size:2+Math.random()*3});
+        for(let i=0;i<6;i++) particles.push({x:bsx, y:bsy, vx:(Math.random()-.5)*5, vy:(Math.random()-.5)*5, life:22, size:2+Math.random()*3});
         break;
       }
     }
@@ -374,8 +378,8 @@ const edges = ["#7b4a25", "#197646", "#1f4f9e", "#5c2bb2", "#a92222", "#6d7a8a",
 
 function drawCrate(c){
   const {x: sx, y: sy} = toScreen(c.x, c.y);
-  const sw = c.w * (W / LOGICAL_W);
-  const sh = c.h * (H / LOGICAL_H);
+  const sw = c.w;
+  const sh = c.h;
   
   const yOffset = Math.sin(c.bobOffset)*5;
   ctx.save();
@@ -482,8 +486,7 @@ function drawOpponentCannon(){
   if (!hasPeer) return;
   const cx = W/2, cy = 62;
   let sAngle = peerAngle;
-  if (myRole === 'bottom') sAngle = peerAngle + Math.PI;
-  if (myRole === 'top') sAngle = peerAngle;
+  if (myRole === 'top') sAngle = peerAngle + Math.PI;
   
   ctx.save();
   ctx.translate(cx, cy);
