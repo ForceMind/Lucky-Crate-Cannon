@@ -197,7 +197,7 @@ socket.on('hit_result', data => {
       floatTexts.push({x:sx, y:sy-35, txt:"+"+reward, life:70, size:24, rise:1.1});
       shake = 8;
       for(let i=0;i<8;i++){
-        coinsFly.push({x:sx+(Math.random()-.5)*40, y:sy+(Math.random()-.5)*30, tx:78, ty:32, life:45+i*2});
+        coinsFly.push({x:sx+(Math.random()-.5)*40, y:sy+(Math.random()-.5)*30, tx:39, ty:H-69, life:45+i*2});
       }
     } else {
       floatTexts.push({x:sx, y:sy-35, txt:"队友击杀", life:40, size:18, rise:1});
