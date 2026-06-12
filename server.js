@@ -63,16 +63,27 @@ class Room {
     this.rtpTimer = null;
     this.createdAt = Date.now();
     this.roomAdvantage = null; 
+    this.physicsTimer = null;
   }
   
   start() {
     this.spawnTimer = setInterval(() => this.spawnGroup(), 3000);
     this.rtpTimer = setInterval(() => this.checkRTP(), 30000);
+    this.physicsTimer = setInterval(() => {
+      const now = Date.now();
+      for (const [id, c] of this.crates.entries()) {
+        c.x += c.vx * 6; // approximate 100ms
+        if (c.x < -800 || c.x > 1800 || (now - c.createdAt > 60000)) {
+          this.crates.delete(id);
+        }
+      }
+    }, 100);
   }
   
   stop() {
     clearInterval(this.spawnTimer);
     clearInterval(this.rtpTimer);
+    clearInterval(this.physicsTimer);
   }
 
   broadcast(event, data, excludeSocketId = null) {
@@ -111,18 +122,13 @@ class Room {
         vx: dir * t.speed * groupSpeedScale,
         bobOffset: Math.random()*Math.PI*2,
         expectedHits: t.multi,
-        progressHits: 0
+        progressHits: 0,
+        createdAt: Date.now()
       };
       this.crates.set(c.id, c);
       newCrates.push(c);
     }
     this.broadcast('spawn_crates', { crates: newCrates });
-    
-    if (this.crates.size > 200) {
-      for (const [id, c] of this.crates.entries()) {
-        if (c.x < -400 || c.x > 1400) this.crates.delete(id);
-      }
-    }
   }
 
   checkRTP() {
@@ -257,6 +263,11 @@ io.on('connection', (socket) => {
     if (room) room.broadcast('peer_skill', { playerId: player.id, type: data.type }, player.id);
   });
 
+  socket.on('emote', (data) => {
+    const room = rooms.get(player.roomId);
+    if (room) room.broadcast('peer_emote', { playerId: player.id, emoji: data.emoji }, player.id);
+  });
+
   socket.on('hit', (data, callback) => {
     const { crateId, bulletId, multi, ts } = data;
     const room = rooms.get(player.roomId);
@@ -333,6 +344,26 @@ app.post('/api/admin/advantage', (req, res) => {
     globalDefaultAdvantage = advantage;
     res.json({ success: true, advantage: globalDefaultAdvantage });
   } else res.status(400).json({ success: false, error: 'Invalid advantage' });
+});
+
+app.post('/api/admin/kick', (req, res) => {
+  const { id } = req.body;
+  const p = allPlayers.get(id);
+  if (p) {
+    p.socket.disconnect(true);
+    res.json({ success: true });
+  } else res.json({ success: false });
+});
+
+app.post('/api/admin/close_room', (req, res) => {
+  const { id } = req.body;
+  const room = rooms.get(Number(id));
+  if (room) {
+    for (const p of room.players) { p.socket.disconnect(true); }
+    room.stop();
+    rooms.delete(room.id);
+    res.json({ success: true });
+  } else res.json({ success: false });
 });
 
 app.get('/api/admin/stats', (req, res) => {

@@ -127,6 +127,12 @@ let peerAngle = Math.PI/2;
 let peerLevel = 1;
 let hasPeer = false;
 
+let myEmote = null;
+let myEmoteTimer = 0;
+let peerEmote = null;
+let peerEmoteTimer = 0;
+const EMOJIS = ['👍', '😎', '😅', '😡'];
+
 socket.on('room_joined', data => {
   roomId = data.roomId;
   myRole = data.role;
@@ -166,6 +172,11 @@ socket.on('peer_skill', data => {
   if (data.type === 'freeze') {
     freezeTimer = 300;
   }
+});
+
+socket.on('peer_emote', data => {
+  peerEmote = data.emoji;
+  peerEmoteTimer = 120;
 });
 
 socket.on('hit_result', data => {
@@ -577,6 +588,38 @@ function drawUI(){
     ctx.font = "bold 18px Arial"; ctx.textAlign="center";
     ctx.fillText("FREEZE", W/2, H/2);
   }
+
+  // Draw emote buttons
+  const eStartX = 16;
+  const eStartY = H/2 - 60;
+  for (let i = 0; i < EMOJIS.length; i++) {
+    ctx.beginPath();
+    ctx.arc(eStartX + 20, eStartY + i * 45, 18, 0, Math.PI*2);
+    ctx.fillStyle = "rgba(255,255,255,.15)";
+    ctx.fill();
+    ctx.font = "20px Arial";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(EMOJIS[i], eStartX + 20, eStartY + i * 45);
+  }
+}
+
+function drawEmotes() {
+  const { cx, cy } = getUiLayout();
+  if (myEmoteTimer > 0) {
+    ctx.globalAlpha = Math.min(1, myEmoteTimer/20);
+    ctx.font = "36px Arial"; ctx.textAlign = "center";
+    ctx.fillText(myEmote, cx, cy - 70 - (120 - myEmoteTimer)*0.3);
+    ctx.globalAlpha = 1;
+    myEmoteTimer--;
+  }
+  if (hasPeer && peerEmoteTimer > 0) {
+    ctx.globalAlpha = Math.min(1, peerEmoteTimer/20);
+    ctx.font = "36px Arial"; ctx.textAlign = "center";
+    const peerY = myRole === 'bottom' ? 62 : H - 62;
+    ctx.fillText(peerEmote, W/2, peerY + 90 + (120 - peerEmoteTimer)*0.3);
+    ctx.globalAlpha = 1;
+    peerEmoteTimer--;
+  }
 }
 
 function draw(){
@@ -630,6 +673,7 @@ function draw(){
 
   drawCannon();
   drawOpponentCannon();
+  drawEmotes();
 
   for(const f of floatTexts){
     ctx.globalAlpha = Math.max(0, Math.min(1, f.life/25));
@@ -683,6 +727,12 @@ function isUiPoint(x,y){
   }
   if (Math.hypot(x - (W - 35), y - 30) <= 18) return true;
   if (Math.hypot(x - (W - 85), y - 30) <= 18) return true;
+  
+  const eStartX = 16;
+  const eStartY = H/2 - 60;
+  for (let i = 0; i < EMOJIS.length; i++) {
+    if (Math.hypot(x - (eStartX + 20), y - (eStartY + i * 45)) <= 18) return true;
+  }
   return false;
 }
 
@@ -724,6 +774,19 @@ function handleUiClick(x, y) {
     }
     if(x>=cx+cannonBtnOffset-cannonBtnW/2 && x<=cx+cannonBtnOffset+cannonBtnW/2) {
       adjustLevel(1); return true;
+    }
+  }
+
+  const eStartX = 16;
+  const eStartY = H/2 - 60;
+  for (let i = 0; i < EMOJIS.length; i++) {
+    if (Math.hypot(x - (eStartX + 20), y - (eStartY + i * 45)) <= 18) {
+      if (myEmoteTimer <= 0) {
+        myEmote = EMOJIS[i];
+        myEmoteTimer = 120;
+        socket.emit('emote', { emoji: myEmote });
+      }
+      return true;
     }
   }
 

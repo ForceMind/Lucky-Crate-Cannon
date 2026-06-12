@@ -90,9 +90,26 @@
         <th>个人 RTP</th>
         <th>房间保底Buff</th>
         <th>当前执行风控率</th>
+        <th>操作</th>
       </tr>
     </thead>
     <tbody id="player_tbody">
+    </tbody>
+  </table>
+</div>
+
+<div class="card" style="margin-top: 20px;">
+  <h2>管理运行中的房间</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>房间 ID</th>
+        <th>当前人数</th>
+        <th>风控干预</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody id="room_tbody">
     </tbody>
   </table>
 </div>
@@ -149,9 +166,28 @@ function fetchStats() {
         <td style="color: ${p.rtp > 100 ? '#22c55e' : (p.rtp < 80 ? '#e11d48' : '#f8fafc')}">${p.rtp}%</td>
         <td>${roomBuff}</td>
         <td><span class="tag ${tagClass}">${tagText}</span></td>
+        <td><button onclick="kickPlayer('${p.id}')" style="padding:6px; background:#e11d48; width:auto;">踢出</button></td>
       `;
       pTable.appendChild(tr);
     });
+
+    const rTable = document.getElementById('room_tbody');
+    rTable.innerHTML = '';
+    if (data.activeRooms && data.activeRooms.length > 0) {
+      data.activeRooms.forEach(r => {
+        const tr = document.createElement('tr');
+        let buff = r.adv === -15 ? '<span class="tag buff">房间级放水 (-15%)</span>' : '<span class="tag default">正常状态</span>';
+        tr.innerHTML = `
+          <td style="font-weight:bold; color:#f1f5f9;">房间 ${r.id}</td>
+          <td>${r.playerCount} 人</td>
+          <td>${buff}</td>
+          <td><button onclick="closeRoom('${r.id}')" style="padding:6px; background:#e11d48; width:auto;">强制关闭</button></td>
+        `;
+        rTable.appendChild(tr);
+      });
+    } else {
+      rTable.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#64748b; padding:20px;">当前暂无运行中的房间</td></tr>';
+    }
 
     if(!document.activeElement || document.activeElement.id !== 'advantage') {
       if(document.getElementById('advantage').value === "") {
@@ -175,6 +211,20 @@ function saveAdvantage() {
     statusEl.innerText = "✅ 设置已保存生效！";
     setTimeout(() => { statusEl.innerText = ""; }, 3000);
   });
+}
+
+function kickPlayer(id) {
+  if (confirm('确认踢出该玩家？')) {
+    fetch('/api/admin/kick', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id}) })
+      .then(res => fetchStats());
+  }
+}
+
+function closeRoom(id) {
+  if (confirm('确认强制关闭该房间？')) {
+    fetch('/api/admin/close_room', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id}) })
+      .then(res => fetchStats());
+  }
 }
 
 setInterval(fetchStats, 2000);
